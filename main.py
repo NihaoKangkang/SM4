@@ -19,6 +19,7 @@ if __name__ == "__main__":
     #     print("Check input data.")
 
     for i in range(0, 1000000):
-        print(i)
+        if i % 10000 == 0:
+            print(i)
         inputData = sm4_encode(inputData, int(inputKey, 16))
-    print(inputData)
+    print(inputData.hex())

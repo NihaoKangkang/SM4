@@ -65,7 +65,7 @@ def F(xi, xi_1, xi_2, xi_3, rki):
     return xi ^ T(t_temp)
 
 def R(X_32, X_33, X_34, X_35):
-    return f"{X_35:08x}{X_34:08x}{X_33:08x}{X_32:08x}".encode()
+    return bytes.fromhex(f"{X_35:08x}{X_34:08x}{X_33:08x}{X_32:08x}")
 
 # data: 128 bit byte stream
 # rkList: rk list
