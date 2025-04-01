@@ -13,7 +13,12 @@ if __name__ == "__main__":
     #         print("Check input data.")
     # except ValueError:
     #     print("Check input data.")
-    if inputData and len(inputKey) == 32:
-        print('SM4 encode result: ', sm4_encode(inputData, int(inputKey, 16)))
-    else:
-        print("Check input data.")
+    # if inputData and len(inputKey) == 32:
+    #     print('SM4 encode result: ', sm4_encode(inputData, int(inputKey, 16)))
+    # else:
+    #     print("Check input data.")
+
+    for i in range(0, 1000000):
+        print(i)
+        inputData = sm4_encode(inputData, int(inputKey, 16))
+    print(inputData)
