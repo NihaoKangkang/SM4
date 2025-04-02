@@ -52,7 +52,7 @@ def T_(data):
 def L(data):
     B = tao(data)
     return B ^ ((B << 2 | B >> 30) & 0xffffffff) ^ ((B << 10 | B >> 22) & 0xffffffff) ^ (
-                (B << 18 | B >> 14) & 0xffffffff) ^ ((B << 24 | B >> 8) & 0xffffffff)
+            (B << 18 | B >> 14) & 0xffffffff) ^ ((B << 24 | B >> 8) & 0xffffffff)
 
 
 def T(data):
@@ -64,8 +64,17 @@ def F(xi, xi_1, xi_2, xi_3, rki):
     t_temp = xi_1 ^ xi_2 ^ xi_3 ^ rki
     return xi ^ T(t_temp)
 
+
 def R(X_32, X_33, X_34, X_35):
     return bytes.fromhex(f"{X_35:08x}{X_34:08x}{X_33:08x}{X_32:08x}")
+
+
+def remove_padding_zeros(data):
+    length = len(data)
+    while length > 0 and data[length - 1] == 0x00:
+        length -= 1
+    return data[:length]
+
 
 # data: 128 bit byte stream
 # rkList: rk list
@@ -84,10 +93,14 @@ def sm4_file_encode(data, key):
     pass
 
 
+def sm4_file_decode(data, key):
+    pass
+
+
 def sm4_str_encode(text, key):
     # 测试用，正式需要放开转换为byte流
-    # byte_text = text.encode()
-    byte_text = text
+    byte_text = text.encode()
+    # byte_text = text
     # 1. 补0 len(byte_text) % 16 == 0
     if len(byte_text) % 16 != 0:
         byte_text += b'\x00' * (16 - len(byte_text) % 16)
@@ -96,21 +109,20 @@ def sm4_str_encode(text, key):
     # 3. 扩展轮密钥
     # print(f"key: {key:032x}")
 
-    # keyHexString = format(key, "032x")
-    # MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
-    #       int(keyHexString[24:], 16)]
-    # K = []
-    # K.append(MK[0] ^ FK[0])
-    # K.append(MK[1] ^ FK[1])
-    # K.append(MK[2] ^ FK[2])
-    # K.append(MK[3] ^ FK[3])
-    # rk = []
-    rk = [0xf12186f9, 0x41662b61, 0x5a6ab19a, 0x7ba92077, 0x367360f4, 0x776a0c61, 0xb6bb89b3, 0x24763151, 0xa520307c, 0xb7584dbd, 0xc30753ed, 0x7ee55b57, 0x6988608c, 0x30d895b7, 0x44ba14af, 0x104495a1, 0xd120b428, 0x73b55fa3, 0xcc874966, 0x92244439, 0xe89e641f, 0x98ca015a, 0xc7159060, 0x99e1fd2e, 0xb79bd80c, 0x1d2115b0, 0xe228aeb, 0xf1780c81, 0x428d3654, 0x62293496, 0x1cf72e5, 0x9124a012]
-    # for i in range(0, 32):
-    #     temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
-    #     K.append(temp_K)
-    #     rk.append(temp_K)
-
+    keyHexString = format(key, "032x")
+    MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+          int(keyHexString[24:], 16)]
+    K = []
+    K.append(MK[0] ^ FK[0])
+    K.append(MK[1] ^ FK[1])
+    K.append(MK[2] ^ FK[2])
+    K.append(MK[3] ^ FK[3])
+    rk = []
+    # rk = [0xf12186f9, 0x41662b61, 0x5a6ab19a, 0x7ba92077, 0x367360f4, 0x776a0c61, 0xb6bb89b3, 0x24763151, 0xa520307c, 0xb7584dbd, 0xc30753ed, 0x7ee55b57, 0x6988608c, 0x30d895b7, 0x44ba14af, 0x104495a1, 0xd120b428, 0x73b55fa3, 0xcc874966, 0x92244439, 0xe89e641f, 0x98ca015a, 0xc7159060, 0x99e1fd2e, 0xb79bd80c, 0x1d2115b0, 0xe228aeb, 0xf1780c81, 0x428d3654, 0x62293496, 0x1cf72e5, 0x9124a012]
+    for i in range(0, 32):
+        temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+        K.append(temp_K)
+        rk.append(temp_K)
 
         # print(f"rk_{i} = {rk[i]:08x}")
     # print(format(MK[0], "08x"))
@@ -126,6 +138,39 @@ def sm4_str_encode(text, key):
     return encodeMessage
 
 
+
+def sm4_str_decode(code, key):
+    byte_code = bytes.fromhex(code)
+
+    # 加密后的密文肯定长度为128bit的倍数
+    # if len(byte_code) % 16 != 0:
+    #     byte_code += b'\x00' * (16 - len(byte_code) % 16)
+    blockNumber = len(byte_code) // 16
+    keyHexString = format(key, "032x")
+    MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+          int(keyHexString[24:], 16)]
+    K = []
+    K.append(MK[0] ^ FK[0])
+    K.append(MK[1] ^ FK[1])
+    K.append(MK[2] ^ FK[2])
+    K.append(MK[3] ^ FK[3])
+    rk = []
+    for i in range(0, 32):
+        temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+        K.append(temp_K)
+        rk.append(temp_K)
+    # 轮密钥反转
+    rk.reverse()
+    decodeMessage = b''
+    for block in range(0, blockNumber):
+        temp_message = sm4_algorithm(byte_code[block * 16: (block + 1) * 16], rk)
+        # 最后一轮，去除补的0x00
+        if block == blockNumber - 1:
+            temp_message = remove_padding_zeros(temp_message)
+        decodeMessage += temp_message
+    return decodeMessage
+
+
 # 输入：data：string key：int
 def sm4_encode(data, key):
     if isfile(data):
@@ -134,3 +179,11 @@ def sm4_encode(data, key):
         return sm4_str_encode(data, key)
         # 测试用，正式须取消注释
         # return sm4_str_encode(str(data), key)
+
+
+# 输出: data: 16进制字符串 key: int
+def sm4_decode(data, key):
+    if isfile(data):
+        return sm4_file_decode(data, key)
+    else:
+        return sm4_str_decode(data, key)
