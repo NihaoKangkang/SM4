@@ -76,6 +76,15 @@ def remove_padding_zeros(data):
     return data[:length]
 
 
+def get_filename_and_extension(filename):
+    # filename中可能包括路径，但是存储到filename中不影响，可以生成文件到输入文件的目录
+    parts = filename.rsplit('.', 1)
+    if len(parts) == 1:
+        return filename, ''
+    else:
+        return parts[0], '.' + parts[1]
+
+
 # data: 128 bit byte stream
 # rkList: rk list
 def sm4_algorithm(data, rkList):
@@ -88,12 +97,21 @@ def sm4_algorithm(data, rkList):
     return R(X[32], X[33], X[34], X[35])
 
 
-#
-def sm4_file_encode(data, key):
-    pass
+def sm4_file_encode(filename, key):
+    o_fname, o_ext = get_filename_and_extension(filename)
+    file_count = 0
+    c_fname = o_fname + '_encoding' + format(file_count, '02d') + o_ext
+    while isfile(c_fname):
+        file_count += 1
+        c_fname = o_fname + '_encoding' + format(file_count, '02d') + o_ext
+    # 加密后文件名c_fname
+    with open(filename, 'rb') as text_file, open(c_fname, 'wb') as encode_file:
+        message = b'test'
+        encode_file.write(message)
+        pass
 
 
-def sm4_file_decode(data, key):
+def sm4_file_decode(filename, key):
     pass
 
 
@@ -171,7 +189,8 @@ def sm4_str_decode(code, key):
     return decodeMessage
 
 
-# 输入：data：string key：int
+# 输入：data：string or file location; key：int
+# 输出: hex string
 def sm4_encode(data, key):
     if isfile(data):
         return sm4_file_encode(data, key)
@@ -181,7 +200,8 @@ def sm4_encode(data, key):
         # return sm4_str_encode(str(data), key)
 
 
-# 输出: data: 16进制字符串 key: int
+# 输入: data: hex string; key: int
+# 输出： byte string or file
 def sm4_decode(data, key):
     if isfile(data):
         return sm4_file_decode(data, key)

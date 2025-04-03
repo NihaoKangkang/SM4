@@ -2,12 +2,14 @@ from SM4 import *
 
 if __name__ == "__main__":
 
-    inputData = input('Input text,hex data or file location need to calculate sm4(press ENTER to abort): ')
+    # inputData = input('Input text,hex data or file location need to calculate sm4(press ENTER to abort): ')
     # inputKey = input('Input 128 bits secret key in hex (like \'0123456789abcdef0123456789abcdef\', input nothing to abort): ')
     # 因为示例为16进制字符串，所以这边进行了byte流输出，实际输入应当为string
     # inputData = b"\x01\x23\x45\x67\x89\xab\xcd\xef\xfe\xdc\xba\x98\x76\x54\x32\x10"
     # inputData = "681edf34d206965e86b3e94f536e4246"
     # Same Key
+    inputData = './LICENSE'
+    # inputData = 'nihao woshi wang'
     inputKey = "0123456789abcdeffedcba9876543210"
     try:
         if inputData and len(inputKey) == 32:

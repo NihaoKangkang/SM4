@@ -1,10 +1,6 @@
-def remove_padding_zeros(data):
-    length = len(data)
-    print(data[length - 4])
-    while length > 0 and data[length - 1] == 0x00:
-        length -= 1
-    print(length)
-    return data[:length]
-
-text = b'hello, world.\x00\x00\x00'
-print(remove_padding_zeros(text))
+i = 1
+s = 'filename' + format(i, '01d') + 'test'
+for j in range(0, 20):
+    print(s)
+    i += 1
+    s = 'filename' + format(i, '01d') + 'test'
