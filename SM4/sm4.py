@@ -1,4 +1,5 @@
 from os.path import isfile
+from tqdm import tqdm
 
 FK = [0xA3B1BAC6, 0x56AA3350, 0x677D9197, 0xB27022DC]
 
@@ -76,15 +77,6 @@ def remove_padding_zeros(data):
     return data[:length]
 
 
-def get_filename_and_extension(filename):
-    # filename中可能包括路径，但是存储到filename中不影响，可以生成文件到输入文件的目录
-    parts = filename.rsplit('.', 1)
-    if len(parts) == 1:
-        return filename, ''
-    else:
-        return parts[0], '.' + parts[1]
-
-
 # data: 128 bit byte stream
 # rkList: rk list
 def sm4_algorithm(data, rkList):
@@ -98,21 +90,81 @@ def sm4_algorithm(data, rkList):
 
 
 def sm4_file_encode(filename, key):
-    o_fname, o_ext = get_filename_and_extension(filename)
+    # 轮密钥拓展
+    keyHexString = format(key, "032x")
+    MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+          int(keyHexString[24:], 16)]
+    K = []
+    K.append(MK[0] ^ FK[0])
+    K.append(MK[1] ^ FK[1])
+    K.append(MK[2] ^ FK[2])
+    K.append(MK[3] ^ FK[3])
+    rk = []
+    for i in range(0, 32):
+        temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+        K.append(temp_K)
+        rk.append(temp_K)
+    # 文件读写部分
     file_count = 0
-    c_fname = o_fname + '_encoding' + format(file_count, '02d') + o_ext
+    c_fname = filename + '_encoded' + format(file_count, '02d')
     while isfile(c_fname):
         file_count += 1
-        c_fname = o_fname + '_encoding' + format(file_count, '02d') + o_ext
+        c_fname = filename + '_encoded' + format(file_count, '02d')
     # 加密后文件名c_fname
     with open(filename, 'rb') as text_file, open(c_fname, 'wb') as encode_file:
-        message = b'test'
-        encode_file.write(message)
-        pass
+        # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
+        byte_file = text_file.read()
+        if len(byte_file) % 16 != 0:
+            byte_file += b'\x00' * (16 - len(byte_file) % 16)
+        # 分块
+        blockNumber = len(byte_file) // 16
+        # 文件加密
+        encodeMessage = b''
+        for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
+            encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
+        encode_file.write(encodeMessage)
+    return c_fname
 
 
 def sm4_file_decode(filename, key):
-    pass
+    # 轮密钥拓展
+    keyHexString = format(key, "032x")
+    MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+          int(keyHexString[24:], 16)]
+    K = []
+    K.append(MK[0] ^ FK[0])
+    K.append(MK[1] ^ FK[1])
+    K.append(MK[2] ^ FK[2])
+    K.append(MK[3] ^ FK[3])
+    rk = []
+    for i in range(0, 32):
+        temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+        K.append(temp_K)
+        rk.append(temp_K)
+    # 轮密钥反转
+    rk.reverse()
+    # 文件读写部分
+    file_count = 0
+    c_fname = filename + '_decoded' + format(file_count, '02d')
+    while isfile(c_fname):
+        file_count += 1
+        c_fname = filename + '_decoded' + format(file_count, '02d')
+    # 加密后文件名c_fname
+    with open(filename, 'rb') as text_file, open(c_fname, 'wb') as decode_file:
+        # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
+        byte_file = text_file.read()
+        if len(byte_file) % 16 != 0:
+            byte_file += b'\x00' * (16 - len(byte_file) % 16)
+        # 分块
+        blockNumber = len(byte_file) // 16
+        # print(f"block number: {blockNumber}")
+        # 文件加密
+        encodeMessage = b''
+        for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
+            encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
+        encodeMessage = remove_padding_zeros(encodeMessage)
+        decode_file.write(encodeMessage)
+    return c_fname
 
 
 def sm4_str_encode(text, key):
@@ -193,10 +245,11 @@ def sm4_str_decode(code, key):
 # 输出: hex string
 def sm4_encode(data, key):
     if isfile(data):
-        return sm4_file_encode(data, key)
+        file_location = sm4_file_encode(data, key)
+        return f"File encode success! File location: {file_location}"
     else:
         return sm4_str_encode(data, key)
-        # 测试用，正式须取消注释
+        # 测试用
         # return sm4_str_encode(str(data), key)
 
 
