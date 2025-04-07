@@ -1,5 +1,8 @@
+import numpy as np
 from os.path import isfile
 from tqdm import tqdm
+from multiprocessing import Pool, shared_memory
+
 
 FK = [0xA3B1BAC6, 0x56AA3350, 0x677D9197, 0xB27022DC]
 
@@ -77,6 +80,21 @@ def remove_padding_zeros(data):
     return data[:length]
 
 
+def process_block_shm(args):
+    block_index, shm_name, total_length, block_size, rk = args
+    # 打开共享内存
+    shm = shared_memory.SharedMemory(name=shm_name)
+    # 利用共享内存构建 numpy 数组，不会拷贝数据
+    buf = np.ndarray((total_length,), dtype=np.uint8, buffer=shm.buf)
+    start = block_index * block_size
+    end = start + block_size
+    # 提取当前块数据（转换为 bytes 后调用加密函数）
+    block_data = bytes(buf[start:end])
+    res = sm4_algorithm(block_data, rk)
+    shm.close()
+    return res
+
+
 # data: 128 bit byte stream
 # rkList: rk list
 def sm4_algorithm(data, rkList):
@@ -94,11 +112,7 @@ def sm4_file_encode(filename, key):
     keyHexString = format(key, "032x")
     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
           int(keyHexString[24:], 16)]
-    K = []
-    K.append(MK[0] ^ FK[0])
-    K.append(MK[1] ^ FK[1])
-    K.append(MK[2] ^ FK[2])
-    K.append(MK[3] ^ FK[3])
+    K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
     rk = []
     for i in range(0, 32):
         temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
@@ -111,18 +125,33 @@ def sm4_file_encode(filename, key):
         file_count += 1
         c_fname = filename + '_encoded' + format(file_count, '02d')
     # 加密后文件名c_fname
-    with open(filename, 'rb') as text_file, open(c_fname, 'wb') as encode_file:
+    with open(filename, 'rb') as text_file:
         # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
         byte_file = text_file.read()
-        if len(byte_file) % 16 != 0:
-            byte_file += b'\x00' * (16 - len(byte_file) % 16)
-        # 分块
-        blockNumber = len(byte_file) // 16
-        # 文件加密
-        encodeMessage = b''
-        for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
-            encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
-        encode_file.write(encodeMessage)
+    if len(byte_file) % 16 != 0:
+        byte_file += b'\x00' * (16 - len(byte_file) % 16)
+    total_length = len(byte_file)
+    # 分块
+    block_size = 16
+    blockNumber = total_length // block_size
+    # 创建共享内存，将整个文件数据写入共享内存，不会复制多份
+    shm = shared_memory.SharedMemory(create=True, size=total_length)
+    # 将文件内容拷贝到共享内存中
+    shm_buf = np.ndarray((total_length,), dtype=np.uint8, buffer=shm.buf)
+    shm_buf[:] = np.frombuffer(byte_file, dtype=np.uint8)
+    # 构造参数列表，每个任务只传递共享内存名称和块索引
+    args_list = [(i, shm.name, total_length, block_size, rk) for i in range(blockNumber)]
+    with Pool() as pool:
+        # imap 保证结果顺序与 args_list 顺序一致
+        results = list(
+            tqdm(pool.imap(process_block_shm, args_list), total=blockNumber, desc='encoding process:', unit='block'))
+    # 合并所有加密块
+    encodeMessage = b''.join(results)
+    with open(c_fname, 'wb') as out_file:
+        out_file.write(encodeMessage)
+    # 释放共享内存
+    shm.close()
+    shm.unlink()
     return c_fname
 
 
@@ -131,11 +160,7 @@ def sm4_file_decode(filename, key):
     keyHexString = format(key, "032x")
     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
           int(keyHexString[24:], 16)]
-    K = []
-    K.append(MK[0] ^ FK[0])
-    K.append(MK[1] ^ FK[1])
-    K.append(MK[2] ^ FK[2])
-    K.append(MK[3] ^ FK[3])
+    K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
     rk = []
     for i in range(0, 32):
         temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
@@ -150,21 +175,107 @@ def sm4_file_decode(filename, key):
         file_count += 1
         c_fname = filename + '_decoded' + format(file_count, '02d')
     # 加密后文件名c_fname
-    with open(filename, 'rb') as text_file, open(c_fname, 'wb') as decode_file:
+    with open(filename, 'rb') as text_file:
         # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
         byte_file = text_file.read()
-        if len(byte_file) % 16 != 0:
-            byte_file += b'\x00' * (16 - len(byte_file) % 16)
-        # 分块
-        blockNumber = len(byte_file) // 16
-        # print(f"block number: {blockNumber}")
-        # 文件加密
-        encodeMessage = b''
-        for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
-            encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
-        encodeMessage = remove_padding_zeros(encodeMessage)
-        decode_file.write(encodeMessage)
+    if len(byte_file) % 16 != 0:
+        byte_file += b'\x00' * (16 - len(byte_file) % 16)
+    total_length = len(byte_file)
+    # 分块
+    block_size = 16
+    blockNumber = total_length // block_size
+    # 创建共享内存，将整个文件数据写入共享内存，不会复制多份
+    shm = shared_memory.SharedMemory(create=True, size=total_length)
+    # 将文件内容拷贝到共享内存中
+    shm_buf = np.ndarray((total_length,), dtype=np.uint8, buffer=shm.buf)
+    shm_buf[:] = np.frombuffer(byte_file, dtype=np.uint8)
+    # 构造参数列表，每个任务只传递共享内存名称和块索引
+    args_list = [(i, shm.name, total_length, block_size, rk) for i in range(blockNumber)]
+    with Pool() as pool:
+        # imap 保证结果顺序与 args_list 顺序一致
+        results = list(
+            tqdm(pool.imap(process_block_shm, args_list), total=blockNumber, desc='decoding process:', unit='block'))
+    # 合并所有加密块
+    encodeMessage = b''.join(results)
+    encodeMessage = remove_padding_zeros(encodeMessage)
+    with open(c_fname, 'wb') as out_file:
+        out_file.write(encodeMessage)
+    # 释放共享内存
+    shm.close()
+    shm.unlink()
+
     return c_fname
+
+
+# def sm4_file_encode(filename, key):
+#     # 轮密钥拓展
+#     keyHexString = format(key, "032x")
+#     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+#           int(keyHexString[24:], 16)]
+#     K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
+#     rk = []
+#     for i in range(0, 32):
+#         temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+#         K.append(temp_K)
+#         rk.append(temp_K)
+#     # 文件读写部分
+#     file_count = 0
+#     c_fname = filename + '_encoded' + format(file_count, '02d')
+#     while isfile(c_fname):
+#         file_count += 1
+#         c_fname = filename + '_encoded' + format(file_count, '02d')
+#     # 加密后文件名c_fname
+#     with open(filename, 'rb') as text_file, open(c_fname, 'wb') as encode_file:
+#         # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
+#         byte_file = text_file.read()
+#         if len(byte_file) % 16 != 0:
+#             byte_file += b'\x00' * (16 - len(byte_file) % 16)
+#         # 分块
+#         blockNumber = len(byte_file) // 16
+#         # 文件加密
+#         args_list = [(i, byte_file, rk) for i in range(blockNumber)]
+#         encodeMessage = b''
+#         for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
+#             encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
+#         encode_file.write(encodeMessage)
+#     return c_fname
+
+
+# def sm4_file_decode(filename, key):
+#     # 轮密钥拓展
+#     keyHexString = format(key, "032x")
+#     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
+#           int(keyHexString[24:], 16)]
+#     K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
+#     rk = []
+#     for i in range(0, 32):
+#         temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
+#         K.append(temp_K)
+#         rk.append(temp_K)
+#     # 轮密钥反转
+#     rk.reverse()
+#     # 文件读写部分
+#     file_count = 0
+#     c_fname = filename + '_decoded' + format(file_count, '02d')
+#     while isfile(c_fname):
+#         file_count += 1
+#         c_fname = filename + '_decoded' + format(file_count, '02d')
+#     # 加密后文件名c_fname
+#     with open(filename, 'rb') as text_file, open(c_fname, 'wb') as decode_file:
+#         # 一次读取整个文件，然后补0 使得 len(filename) % 16 == 0
+#         byte_file = text_file.read()
+#         if len(byte_file) % 16 != 0:
+#             byte_file += b'\x00' * (16 - len(byte_file) % 16)
+#         # 分块
+#         blockNumber = len(byte_file) // 16
+#         # print(f"block number: {blockNumber}")
+#         # 文件加密
+#         encodeMessage = b''
+#         for block in tqdm(range(0, blockNumber), desc='encoding process: ', unit='block'):
+#             encodeMessage += sm4_algorithm(byte_file[block * 16: (block + 1) * 16], rk)
+#         encodeMessage = remove_padding_zeros(encodeMessage)
+#         decode_file.write(encodeMessage)
+#     return c_fname
 
 
 def sm4_str_encode(text, key):
@@ -182,11 +293,7 @@ def sm4_str_encode(text, key):
     keyHexString = format(key, "032x")
     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
           int(keyHexString[24:], 16)]
-    K = []
-    K.append(MK[0] ^ FK[0])
-    K.append(MK[1] ^ FK[1])
-    K.append(MK[2] ^ FK[2])
-    K.append(MK[3] ^ FK[3])
+    K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
     rk = []
     # rk = [0xf12186f9, 0x41662b61, 0x5a6ab19a, 0x7ba92077, 0x367360f4, 0x776a0c61, 0xb6bb89b3, 0x24763151, 0xa520307c, 0xb7584dbd, 0xc30753ed, 0x7ee55b57, 0x6988608c, 0x30d895b7, 0x44ba14af, 0x104495a1, 0xd120b428, 0x73b55fa3, 0xcc874966, 0x92244439, 0xe89e641f, 0x98ca015a, 0xc7159060, 0x99e1fd2e, 0xb79bd80c, 0x1d2115b0, 0xe228aeb, 0xf1780c81, 0x428d3654, 0x62293496, 0x1cf72e5, 0x9124a012]
     for i in range(0, 32):
@@ -219,11 +326,7 @@ def sm4_str_decode(code, key):
     keyHexString = format(key, "032x")
     MK = [int(keyHexString[:8], 16), int(keyHexString[8:16], 16), int(keyHexString[16:24], 16),
           int(keyHexString[24:], 16)]
-    K = []
-    K.append(MK[0] ^ FK[0])
-    K.append(MK[1] ^ FK[1])
-    K.append(MK[2] ^ FK[2])
-    K.append(MK[3] ^ FK[3])
+    K = [MK[0] ^ FK[0], MK[1] ^ FK[1], MK[2] ^ FK[2], MK[3] ^ FK[3]]
     rk = []
     for i in range(0, 32):
         temp_K = K[i] ^ T_(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i])
